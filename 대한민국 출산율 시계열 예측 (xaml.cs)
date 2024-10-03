@@ -1,0 +1,207 @@
+// MathNet.Numerics : 수치 해석 및 통계 분석 라이브러리, 여기서는 통계 분석과 선형 회귀를 위해 사용됨
+using System;
+using System.Collections.Generic;
+using System.Windows; // WPF(Window Presentation Foundation)를 위한 네임스페이스 부분
+using LiveCharts; // 차트를 그리기 위해 LiveCharts 라이브러리 사용 부분
+using LiveCharts.Wpf; // WPF에서 LiveCharts 차트를 표시하기 위한 네임스페이스 부분
+using MathNet.Numerics.Statistics; // 통계 분석을 위한 MathNet 라이브러리 사용 부분
+using MathNet.Numerics.LinearAlgebra; // 행렬 계산을 위한 MathNet 라이브러리 사용 부분
+using MathNet.Numerics.LinearRegression; // 회귀 분석을 위한 MathNet 라이브러리 사용 부분
+
+namespace BirthRatePrediction
+{
+    // MainWindow는 WPF 응용 프로그램의 기본 창 지정 부분
+    public partial class MainWindow : Window
+    {
+        // 2014년부터 2023년까지의 대한민국 출산율 데이터를 리스트로 선언하는 부분
+        // 출산율 데이터는 시계열 분석을 위한 입력 데이터로 사용됨
+        private List<double> birthRates = new List<double> { 1.23, 1.24, 1.30, 1.19, 1.20, 1.24, 1.17, 1.05, 0.98, 0.92, 0.84, 0.81, 0.78, 0.72 };
+
+        // 시계열 데이터를 보여주기 위한 차트를 구성하는 시리즈 컬렉션 지정 부분
+        // SeriesCollection는 LiveCharts 라이브러리에서 데이터를 차트에 시각화하기 위해 사용하는 클래스
+        public SeriesCollection BirthRateValues { get; set; }
+
+        // 차트에서 사용할 레이블 (각 연도를 나타냄)을 저장하는 리스트 지정 부분
+        public List<string> Labels { get; set; }
+
+        // MainWindow 생성자: WPF 창을 초기화하고, 차트와 데이터를 설정하는 부분
+        public MainWindow()
+        {
+            InitializeComponent(); // WPF에서 기본적으로 사용하는 초기화 메서드 부분
+
+            // 차트에 출산율 데이터를 표시하기 위한 LineSeries를 SeriesCollection에 추가하는 부분
+            // LineSeries는 LiveCharts 라이브러리에서 선형 그래프를 그리기 위해 사용하는 클래스
+            BirthRateValues = new SeriesCollection
+            {
+                new LineSeries
+                {
+                    Values = new ChartValues<double>(birthRates) // 기존 출산율 데이터를 선으로 연결해 차트에 표시하는 부분
+                }
+            };
+
+            // 연도별 출산율 레이블을 리스트로 설정하는 부분
+            Labels = new List<string> { "2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023" };
+
+            // WPF에서 데이터 바인딩을 사용하여 XAML UI 요소와 데이터를 연결하는 부분
+            DataContext = this; // 여기서 this는 MainWindow 클래스의 인스턴스를 가리킴. 즉, 클래스 자체를 데이터 컨텍스트로 설정하는 부분
+        }
+
+        // 예측 버튼 클릭 이벤트 핸들러: ARIMA 모델을 사용해 출산율을 예측하는 작업을 수행하는 부분
+        // XAML 파일의 Click="btnPredict_Click" 와 매핑됨
+        private void btnPredict_Click(object sender, RoutedEventArgs e)
+        {
+            // ARIMA 모델의 p, d, q 파라미터 설정하는 부분
+            int p = 5; // 자기회귀(AR) 차수 : 몇 개의 과거 데이터를 사용하여 현재 값을 설명할지 결정 (ex 내일의 주가가 오늘 주가와 그 전날 주가에 의해 결정된다)
+            int d = 1; // 차분 차수 : 오늘 값에서 어제 값을 빼는 것 예를들어, 데이터가 시간에 따라 상승하거나 하락하는 경향이 있을 때, 제거하려 쓰는 것 (데이터 정상화)
+            int q = 1; // 이동평균(MA) 차수 : 과거 예측의 오차를 고려해서, 현재 예측을 개선하는 과정 즉, 어제 예측을 틀린 부분까지 고려해서 오늘 예측을 조정한다 라는 방식
+
+            // p : 과거 데이터를 얼마나 참조할지
+            // d : 데이터의 경향(추세)을 얼마나 없앨지
+            // q : 과거 예측에서 틀린 것을 얼마나 반영할지
+
+            // 시계열 데이터를 차분하여 안정적인 형태로 변환하는 부분
+            List<double> differenced = Difference(birthRates, d);
+
+            // ARIMA 모델에 적합한 파라미터를 추정하는 부분
+            var arimaModel = FitARIMA(differenced, p, q);
+
+            // 2023년 이후 2028년까지의 예측값을 생성하는 부분
+            List<double> forecast = ForecastARIMA(arimaModel, 2023, 2028, p, d, q);
+
+            // 예측된 데이터를 차트와 데이터 그리드에 반영하는 부분
+            UpdateChartAndGrid(forecast);
+        }
+
+        // 차트와 데이터 그리드를 업데이트하는 함수 부분
+        private void UpdateChartAndGrid(List<double> forecast)
+        {
+            // 예측 결과를 저장할 리스트를 생성하는 부분
+            List<PredictionResult> results = new List<PredictionResult>();
+            for (int i = 2024; i <= 2028; i++)
+            {
+                // 연도와 예측된 출산율을 결과 리스트에 추가하는 부분
+                results.Add(new PredictionResult { Year = i, PredictedBirthRate = Math.Round(forecast[i - 2024], 2) });
+            }
+
+            // 데이터 그리드에 예측 결과를 표시하는 부분
+            dataGrid.ItemsSource = results;
+
+            // 예측된 출산율 데이터를 차트에 추가하는 부분
+            foreach (var value in forecast)
+            {
+                BirthRateValues[0].Values.Add(Math.Round(value, 2));
+            }
+
+            // 차트의 레이블에 예측된 연도를 추가하는 부분
+            for (int i = 2024; i <= 2028; i++)
+            {
+                Labels.Add(i.ToString());
+            }
+
+            // 차트를 업데이트하여 새로 추가된 데이터를 반영하는 부분
+            birthRateChart.Update(true, true);
+        }
+
+        // 차분(Differencing) 함수: 시계열 데이터를 안정적인 형태로 만들기 위한 차분 작업을 수행하는 부분
+        // 차분은 현재 값에서 이전 값을 빼는 방식으로, 데이터의 추세를 제거하는 작업
+        private List<double> Difference(List<double> series, int d)
+        {
+            if (d < 0) throw new ArgumentOutOfRangeException("d는 0 이상의 값이어야 합니다.");
+
+            List<double> differenced = new List<double>(series); // 원본 시리즈를 복사하는 부분
+
+            // d의 값이 시리즈의 길이보다 클 경우 최대 차분 가능한 값을 사용하는 부분
+            if (d > series.Count - 1)
+            {
+                throw new InvalidOperationException("차분 차수 d는 데이터의 길이를 초과할 수 없습니다.");
+            }
+
+            for (int diffCount = 0; diffCount < d; diffCount++)
+            {
+                List<double> temp = new List<double>();
+
+                // 이전 값이 있는지 확인하며 차분을 수행하는 부분
+                for (int i = 1; i < differenced.Count; i++)
+                {
+                    temp.Add(differenced[i] - differenced[i - 1]);
+                }
+
+                differenced = temp; // 새로운 차분된 리스트로 업데이트하는 부분
+
+                // 만약 차분 후 리스트가 비어 있다면 오류를 발생시키는 부분
+                if (differenced.Count == 0)
+                {
+                    throw new InvalidOperationException("차분된 데이터가 비어 있습니다.");
+                }
+            }
+
+            return differenced; // 차분된 데이터 리스트를 반환하는 부분
+        }
+
+        // ARIMA 모델 파라미터를 추정하는 함수 부분
+        // 이 함수는 자기회귀(AR)와 이동평균(MA) 파라미터를 계산하는 작업
+        private (double[] ARParams, double[] MAParams) FitARIMA(List<double> differencedSeries, int p, int q)
+        {
+            // 차분된 시계열 데이터를 행렬로 변환하는 부분
+            var matrix = Matrix<double>.Build.Dense(differencedSeries.Count - p, p);
+            var vector = Vector<double>.Build.Dense(differencedSeries.Count - p);
+
+            for (int i = p; i < differencedSeries.Count; i++)
+            {
+                for (int j = 0; j < p; j++)
+                {
+                    matrix[i - p, j] = differencedSeries[i - j - 1]; // AR 값 지정
+                }
+                vector[i - p] = differencedSeries[i]; // 목표 값 지정
+            }
+
+            double[] arParams = new double[p];
+            double[] maParams = new double[q];
+
+            try
+            {
+                // 다중 회귀를 QR 분해로 해결하여 AR 파라미터를 계산하는 부분
+                arParams = MultipleRegression.QR(matrix, vector).ToArray();
+            }
+            catch (Exception ex)
+            {
+                // 예외 처리: 오류 메시지 출력 및 기본값 설정하는 부분
+                MessageBox.Show($"AR 파라미터 추정 중 오류 발생: {ex.Message}", "오류", MessageBoxButton.OK, MessageBoxImage.Error);
+
+                // AR 파라미터에 기본값으로 0을 설정하는 부분
+                arParams = new double[p];
+            }
+
+            return (arParams, maParams);
+        }
+
+        // ARIMA 모델로 미래 값을 예측하는 함수 부분
+        private List<double> ForecastARIMA((double[] ARParams, double[] MAParams) model, int startYear, int endYear, int p, int d, int q)
+        {
+            List<double> forecast = new List<double>(); // 예측 결과를 저장할 리스트 부분
+
+            // 예측할 연도의 범위만큼 반복하여 출산율을 예측하는 부분
+            for (int year = startYear; year <= endYear; year++)
+            {
+                double nextValue = 0.0;
+
+                // 자기회귀(AR) 파라미터를 사용하여 다음 값을 예측하는 부분
+                for (int i = 0; i < p && i < birthRates.Count; i++)
+                {
+                    nextValue += model.ARParams[i] * birthRates[birthRates.Count - i - 1];
+                }
+
+                forecast.Add(nextValue); // 예측된 값을 리스트에 추가하는 부분
+            }
+
+            return forecast; // 예측 결과를 반환하는 부분
+        }
+    }
+
+    // 예측 결과를 저장하는 클래스 부분
+    public class PredictionResult
+    {
+        public int Year { get; set; } // 연도를 나타내는 속성
+        public double PredictedBirthRate { get; set; } // 예측된 출산율을 나타내는 속성
+    }
+}
